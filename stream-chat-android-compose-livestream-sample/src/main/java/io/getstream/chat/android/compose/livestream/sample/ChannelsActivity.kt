@@ -27,9 +27,9 @@ import io.getstream.chat.android.compose.livestream.sample.extensions.streamerAv
 import io.getstream.chat.android.compose.livestream.sample.extensions.streamerName
 import io.getstream.chat.android.compose.livestream.sample.ui.channels.ChannelItemCenterContent
 import io.getstream.chat.android.compose.livestream.sample.ui.messages.ChatSettingsIcon
-import io.getstream.chat.android.compose.livestream.sample.ui.theme.LiveStreamAppTheme
 import io.getstream.chat.android.compose.ui.channels.list.ChannelItem
 import io.getstream.chat.android.compose.ui.channels.list.ChannelList
+import io.getstream.chat.android.compose.ui.theme.ChatTheme
 import io.getstream.chat.android.compose.viewmodel.channel.ChannelListViewModel
 import io.getstream.chat.android.compose.viewmodel.channel.ChannelViewModelFactory
 import io.getstream.chat.android.offline.ChatDomain
@@ -53,7 +53,7 @@ class ChannelsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            LiveStreamAppTheme {
+            ChatTheme {
                 ChannelList(
                     modifier = Modifier.fillMaxSize(),
                     viewModel = channelListViewModel,

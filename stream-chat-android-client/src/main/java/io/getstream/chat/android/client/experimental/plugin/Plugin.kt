@@ -1,6 +1,5 @@
 package io.getstream.chat.android.client.experimental.plugin
 
-import android.content.Context
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.core.ExperimentalStreamChatApi
 
@@ -9,10 +8,8 @@ import io.getstream.chat.android.core.ExperimentalStreamChatApi
  */
 @ExperimentalStreamChatApi
 public interface Plugin {
-    public val name: String
-
     /**
-     * Initialize a plugin. Do not implement heavy work here. It is invoked when build ChatClient.
+     * Name of this plugin.
      */
-    public fun init(appContext: Context, chatClient: ChatClient)
+    public val name: String
 }

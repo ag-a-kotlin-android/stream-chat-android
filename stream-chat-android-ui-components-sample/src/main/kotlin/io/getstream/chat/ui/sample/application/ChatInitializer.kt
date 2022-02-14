@@ -5,14 +5,15 @@ import com.google.firebase.FirebaseApp
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.logger.ChatLogLevel
 import io.getstream.chat.android.client.notifications.handler.NotificationConfig
-import io.getstream.chat.android.core.ExperimentalStreamChatApi
-import io.getstream.chat.android.offline.experimental.plugin.Config
-import io.getstream.chat.android.offline.experimental.plugin.OfflinePlugin
 import io.getstream.chat.android.client.notifications.handler.NotificationHandlerFactory
+import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.core.internal.InternalStreamChatApi
 import io.getstream.chat.android.markdown.MarkdownTextTransformer
+import io.getstream.chat.android.offline.experimental.plugin.configuration.Config
+import io.getstream.chat.android.offline.experimental.plugin.factory.StreamOfflinePluginFactory
 import io.getstream.chat.android.pushprovider.firebase.FirebasePushDeviceGenerator
 import io.getstream.chat.android.pushprovider.huawei.HuaweiPushDeviceGenerator
+import io.getstream.chat.android.pushprovider.xiaomi.XiaomiPushDeviceGenerator
 import io.getstream.chat.android.ui.ChatUI
 import io.getstream.chat.ui.sample.BuildConfig
 import io.getstream.chat.ui.sample.feature.HostActivity
@@ -27,9 +28,9 @@ class ChatInitializer(private val context: Context) {
         val notificationHandler = NotificationHandlerFactory.createNotificationHandler(
             context = context,
             newMessageIntent = {
-                    messageId: String,
-                    channelType: String,
-                    channelId: String,
+                messageId: String,
+                channelType: String,
+                channelId: String,
                 ->
                 HostActivity.createLaunchIntent(context, messageId, channelType, channelId)
             }
@@ -39,11 +40,16 @@ class ChatInitializer(private val context: Context) {
                 pushDeviceGenerators = listOf(
                     FirebasePushDeviceGenerator(),
                     HuaweiPushDeviceGenerator(context, ApplicationConfigurator.HUAWEI_APP_ID),
+                    XiaomiPushDeviceGenerator(
+                        context,
+                        ApplicationConfigurator.XIAOMI_APP_ID,
+                        ApplicationConfigurator.XIAOMI_APP_KEY,
+                    ),
                 ),
             )
         val logLevel = if (BuildConfig.DEBUG) ChatLogLevel.ALL else ChatLogLevel.NOTHING
 
-        val offlinePlugin = OfflinePlugin(Config(userPresence = true, persistenceEnabled = true))
+        val offlinePlugin = StreamOfflinePluginFactory(Config(userPresence = true, persistenceEnabled = true), context)
 
         val client = ChatClient.Builder(apiKey, context)
             .loggerHandler(FirebaseLogger)

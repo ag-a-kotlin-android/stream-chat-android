@@ -1,7 +1,6 @@
 package io.getstream.chat.android.ui.message.list.adapter.view.internal
 
 import android.content.Context
-import android.content.res.Resources
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.View
@@ -20,6 +19,7 @@ import com.google.android.material.shape.ShapeAppearanceModel
 import io.getstream.chat.android.client.models.Attachment
 import io.getstream.chat.android.ui.R
 import io.getstream.chat.android.ui.common.extensions.internal.createStreamThemeWrapper
+import io.getstream.chat.android.ui.common.extensions.internal.displayMetrics
 import io.getstream.chat.android.ui.common.extensions.internal.dpToPx
 import io.getstream.chat.android.ui.common.extensions.internal.dpToPxPrecise
 import io.getstream.chat.android.ui.common.extensions.internal.getOrDefault
@@ -29,17 +29,19 @@ import io.getstream.chat.android.ui.message.list.background.ShapeAppearanceModel
 internal class MediaAttachmentsGroupView : ConstraintLayout {
     var attachmentClickListener: AttachmentClickListener? = null
     var attachmentLongClickListener: AttachmentLongClickListener? = null
-    val maxMediaAttachmentHeight: Int by lazy {
-        (Resources.getSystem().displayMetrics.heightPixels * MAX_HEIGHT_PERCENTAGE).toInt()
+    private val maxMediaAttachmentHeight: Int by lazy {
+        (displayMetrics().heightPixels * MAX_HEIGHT_PERCENTAGE).toInt()
     }
 
     private var state: State = State.Empty
 
     constructor(context: Context) : super(context.createStreamThemeWrapper())
     constructor(context: Context, attrs: AttributeSet?) : super(context.createStreamThemeWrapper(), attrs)
-    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) : super(context.createStreamThemeWrapper(),
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) : super(
+        context.createStreamThemeWrapper(),
         attrs,
-        defStyleAttr)
+        defStyleAttr
+    )
 
     constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int, defStyleRes: Int) : super(
         context.createStreamThemeWrapper(),

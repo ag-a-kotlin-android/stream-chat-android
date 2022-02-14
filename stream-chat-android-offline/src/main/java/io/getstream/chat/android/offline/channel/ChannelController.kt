@@ -7,6 +7,8 @@ import io.getstream.chat.android.client.call.await
 import io.getstream.chat.android.client.errors.ChatError
 import io.getstream.chat.android.client.events.ChatEvent
 import io.getstream.chat.android.client.extensions.enrichWithCid
+import io.getstream.chat.android.client.extensions.isPermanent
+import io.getstream.chat.android.client.extensions.retry
 import io.getstream.chat.android.client.extensions.uploadId
 import io.getstream.chat.android.client.logger.ChatLogger
 import io.getstream.chat.android.client.models.Attachment
@@ -23,7 +25,6 @@ import io.getstream.chat.android.client.utils.Result
 import io.getstream.chat.android.client.utils.SyncStatus
 import io.getstream.chat.android.client.utils.map
 import io.getstream.chat.android.client.utils.recover
-import io.getstream.chat.android.client.utils.toUnitResult
 import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.offline.ChatDomainImpl
 import io.getstream.chat.android.offline.experimental.channel.logic.ChannelLogic
@@ -31,7 +32,6 @@ import io.getstream.chat.android.offline.experimental.channel.state.ChannelMutab
 import io.getstream.chat.android.offline.experimental.channel.thread.logic.ThreadLogic
 import io.getstream.chat.android.offline.experimental.channel.thread.state.ThreadMutableState
 import io.getstream.chat.android.offline.extensions.addMyReaction
-import io.getstream.chat.android.offline.extensions.isPermanent
 import io.getstream.chat.android.offline.extensions.removeMyReaction
 import io.getstream.chat.android.offline.message.MessageSendingService
 import io.getstream.chat.android.offline.message.MessageSendingServiceFactory
@@ -80,7 +80,7 @@ public class ChannelController internal constructor(
     private val threadControllerMap: ConcurrentHashMap<String, ThreadController> = ConcurrentHashMap()
 
     private val messageSendingService: MessageSendingService =
-        messageSendingServiceFactory.create(domainImpl, this, client.channel(cid))
+        messageSendingServiceFactory.create(domainImpl, this, client, client.channel(cid))
 
     internal val unfilteredMessages by mutableState::messageList
     internal val hideMessagesBefore by mutableState::hideMessagesBefore
@@ -232,9 +232,6 @@ public class ChannelController internal constructor(
             Result(result?.error() ?: ChatError("Current user null"))
         }
     }
-
-    /** Delete the channel action. Fires an API request. */
-    internal suspend fun delete(): Result<Unit> = channelClient.delete().await().toUnitResult()
 
     internal suspend fun watch(limit: Int = 30) {
         // Otherwise it's too easy for devs to create UI bugs which DDOS our API
@@ -429,7 +426,8 @@ public class ChannelController internal constructor(
         }
 
         if (online) {
-            val result = domainImpl.runAndRetry { client.sendReaction(reaction, enforceUnique) }
+            // TODO: Will be removed after migrating ChatDomain
+            val result = client.sendReaction(reaction, enforceUnique).retry(domainImpl.scope, client.retryPolicy).await()
             return if (result.isSuccess) {
                 reaction.syncStatus = SyncStatus.COMPLETED
                 domainImpl.repos.insertReaction(reaction)
@@ -477,7 +475,8 @@ public class ChannelController internal constructor(
             }
 
         if (online) {
-            val result = domainImpl.runAndRetry { client.deleteReaction(reaction.messageId, reaction.type) }
+            // TODO: Will be removed after migrating ChatDomain
+            val result = client.deleteReaction(reaction.messageId, reaction.type).retry(domainImpl.scope, client.retryPolicy).await()
             return if (result.isSuccess) {
                 reaction.syncStatus = SyncStatus.COMPLETED
                 domainImpl.repos.insertReaction(reaction)
@@ -556,14 +555,31 @@ public class ChannelController internal constructor(
 
     internal fun updateDataFromChannel(c: Channel) = channelLogic.updateDataFromChannel(c)
 
+    /**
+     * Edits the specified message. Local storage is updated immediately.
+     * The API request is retried according to the retry policy specified on the chatDomain.
+     *
+     * @param message The message to edit.
+     *
+     * @return Executable async [Call] responsible for editing a message.
+     *
+     * @see io.getstream.chat.android.livedata.utils.RetryPolicy
+     */
+    @Deprecated(
+        message = "ChatDomain.editMessage is deprecated. Use function ChatClient::updateMessage instead",
+        replaceWith = ReplaceWith(
+            expression = "ChatClient.instance().updateMessage(message)",
+            imports = arrayOf("io.getstream.chat.android.client.ChatClient")
+        ),
+        level = DeprecationLevel.WARNING
+    )
     internal suspend fun editMessage(message: Message): Result<Message> {
         // TODO: should we rename edit message into update message to be similar to llc?
         val online = domainImpl.isOnline()
-        val messageToBeEdited = message.copy()
-
-        messageToBeEdited.updatedLocallyAt = Date()
-
-        messageToBeEdited.syncStatus = if (!online) SyncStatus.SYNC_NEEDED else SyncStatus.IN_PROGRESS
+        val messageToBeEdited = message.copy(
+            updatedLocallyAt = Date(),
+            syncStatus = if (!online) SyncStatus.SYNC_NEEDED else SyncStatus.IN_PROGRESS
+        )
 
         // Update flow
         upsertMessage(messageToBeEdited)
@@ -572,13 +588,11 @@ public class ChannelController internal constructor(
         domainImpl.repos.insertMessage(messageToBeEdited)
 
         if (online) {
-            val runnable = {
-                client.updateMessage(messageToBeEdited)
-            }
             // updating a message should cancel prior runnables editing the same message...
             // cancel previous message jobs
             editJobs[message.id]?.cancelAndJoin()
-            val job = domainImpl.scope.async { domainImpl.runAndRetry(runnable) }
+            // TODO: Will be removed after migrating ChatDomain
+            val job = domainImpl.scope.async { client.updateMessageInternal(messageToBeEdited).retry(domainImpl.scope, client.retryPolicy).await() }
             editJobs[message.id] = job
             val result = job.await()
             if (result.isSuccess) {
@@ -618,10 +632,8 @@ public class ChannelController internal constructor(
         domainImpl.repos.insertMessage(messageToBeDeleted)
 
         if (online) {
-            val runnable = {
-                client.deleteMessage(messageToBeDeleted.id, hard)
-            }
-            val result = domainImpl.runAndRetry(runnable)
+            // TODO: Will be removed after migrating ChatDomain
+            val result = client.deleteMessage(messageToBeDeleted.id, hard).retry(domainImpl.scope, client.retryPolicy).await()
             if (result.isSuccess) {
                 val deletedMessage = result.data()
                 deletedMessage.syncStatus = SyncStatus.COMPLETED
@@ -656,6 +668,7 @@ public class ChannelController internal constructor(
             ?.data()
             ?: domainImpl.repos.selectMessage(messageId)
             ?: return Result(ChatError("Error while fetching message from backend. Message id: $messageId"))
+        channelLogic.storeMessageLocally(listOf(message))
         upsertMessage(message)
         loadOlderMessages(messageId, newerMessagesOffset)
         loadNewerMessages(messageId, olderMessagesOffset)

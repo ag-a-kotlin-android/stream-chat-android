@@ -42,7 +42,6 @@ import io.getstream.chat.android.compose.livestream.sample.ui.messages.SendButto
 import io.getstream.chat.android.compose.livestream.sample.ui.player.VideoPlayer
 import io.getstream.chat.android.compose.livestream.sample.ui.reward.RewardsContent
 import io.getstream.chat.android.compose.livestream.sample.ui.reward.RewardsIntegration
-import io.getstream.chat.android.compose.livestream.sample.ui.theme.LiveStreamAppTheme
 import io.getstream.chat.android.compose.state.messages.list.MessageItemState
 import io.getstream.chat.android.compose.ui.components.composer.MessageInput
 import io.getstream.chat.android.compose.ui.messages.composer.MessageComposer
@@ -72,7 +71,7 @@ class MessagesActivity : AppCompatActivity() {
             var isRewardsContentExpanded by remember { mutableStateOf(false) }
             var isChannelDescriptionExpanded by remember { mutableStateOf(false) }
 
-            LiveStreamAppTheme {
+            ChatTheme {
                 // A surface container using the 'background' color from the theme
                 Surface(color = ChatTheme.colors.appBackground) {
                     Scaffold(

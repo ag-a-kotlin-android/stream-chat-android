@@ -14,6 +14,7 @@ import io.getstream.chat.android.client.models.Channel
 import io.getstream.chat.android.client.models.Command
 import io.getstream.chat.android.client.models.Member
 import io.getstream.chat.android.client.models.Message
+import io.getstream.chat.android.client.utils.internal.toggle.ToggleService
 import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.livedata.ChatDomain
 import io.getstream.chat.android.offline.extensions.keystroke
@@ -26,10 +27,12 @@ import java.io.File
  * Can be bound to the view using the MessageInputViewModel.bindView function.
  * @param cid The full channel id, i.e. "messaging:123".
  * @param chatDomain Entry point for all livedata & offline operations.
+ * @param chatClient Entry point for most of the chat SDK
  */
 public class MessageInputViewModel @JvmOverloads constructor(
     private val cid: String,
     private val chatDomain: ChatDomain = ChatDomain.instance(),
+    private val chatClient: ChatClient = ChatClient.instance(),
 ) : ViewModel() {
     private var activeThread = MutableLiveData<Message?>()
     private val _maxMessageLength = MediatorLiveData<Int>()
@@ -146,7 +149,12 @@ public class MessageInputViewModel @JvmOverloads constructor(
      */
     public fun editMessage(message: Message) {
         stopTyping()
-        chatDomain.editMessage(message).enqueue(
+
+        if (ToggleService.isEnabled(ToggleService.TOGGLE_KEY_OFFLINE)) {
+            chatClient.updateMessage(message)
+        } else {
+            chatDomain.editMessage(message)
+        }.enqueue(
             onError = { chatError ->
                 logger.logE("Could not edit message with cid: ${message.cid}. Error message: ${chatError.message}. Cause message: ${chatError.cause?.message}")
             }

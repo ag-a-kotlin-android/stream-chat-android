@@ -10,7 +10,12 @@ import io.getstream.chat.android.client.api.models.QuerySort
 import io.getstream.chat.android.client.api.models.SendActionRequest
 import io.getstream.chat.android.client.call.Call
 import io.getstream.chat.android.client.call.CoroutineCall
+import io.getstream.chat.android.client.call.await
+import io.getstream.chat.android.client.call.doOnResult
+import io.getstream.chat.android.client.call.onErrorReturn
 import io.getstream.chat.android.client.events.ChatEvent
+import io.getstream.chat.android.client.experimental.plugin.listeners.GetMessageListener
+import io.getstream.chat.android.client.extensions.retry
 import io.getstream.chat.android.client.models.Attachment
 import io.getstream.chat.android.client.models.Channel
 import io.getstream.chat.android.client.models.Member
@@ -18,6 +23,7 @@ import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.client.utils.Result
 import io.getstream.chat.android.client.utils.SyncStatus
+import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.offline.ChatDomain
 import io.getstream.chat.android.offline.ChatDomainImpl
 import io.getstream.chat.android.offline.channel.CreateChannelService
@@ -182,7 +188,7 @@ public fun ChatClient.loadOlderMessages(cid: String, messageLimit: Int): Call<Ch
 }
 
 /**
- * Cancels the message of "ephemeral" type. Removes the message from local storage.
+ *  Cancels the message of "ephemeral" type. Removes the message from local storage.
  * API call to remove the message is retried according to the retry policy specified on the chatDomain.
  *
  * @param message The `ephemeral` message to cancel.
@@ -214,10 +220,10 @@ public fun ChatClient.createChannel(channel: Channel): Call<Channel> {
     val domainImpl = domainImpl()
     return CoroutineCall(domainImpl.scope) {
         CreateChannelService(
+            scope = domainImpl.scope,
             client = this@createChannel,
             repositoryFacade = domainImpl.repos,
             getChannelController = domainImpl::channel,
-            callRetryService = domainImpl.callRetryService(),
             activeQueries = domainImpl.getActiveQueries(),
         ).createChannel(channel, domainImpl.isOnline(), domainImpl.user.value)
     }
@@ -259,7 +265,7 @@ internal fun ChatClient.sendGiphy(message: Message): Call<Message> {
 
         validateCid(cid)
 
-        domainImpl.callRetryService().runAndRetry { channelClient.sendAction(request) }.also { resultMessage ->
+        channelClient.sendAction(request).retry(domainImpl.scope, retryPolicy).await().also { resultMessage ->
             if (resultMessage.isSuccess) {
                 channelController.removeLocalMessage(resultMessage.data())
             }
@@ -288,7 +294,7 @@ internal fun ChatClient.shuffleGiphy(message: Message): Call<Message> {
             SendActionRequest(cid, id, type, mapOf(KEY_MESSAGE_ACTION to MESSAGE_ACTION_SHUFFLE))
         }
 
-        val result = domainImpl.callRetryService().runAndRetry { channelClient.sendAction(request) }
+        val result = channelClient.sendAction(request).retry(domainImpl.scope, retryPolicy).await()
 
         if (result.isSuccess) {
             val processedMessage: Message = result.data()
@@ -302,4 +308,40 @@ internal fun ChatClient.shuffleGiphy(message: Message): Call<Message> {
             Result(result.error())
         }
     }
+}
+
+/**
+ * Loads message for a given message id and channel id.
+ *
+ * @param cid The full channel id i. e. messaging:123.
+ * @param messageId The id of the message.
+ * @param olderMessagesOffset How many new messages to load before the requested message.
+ * @param newerMessagesOffset How many new messages to load after the requested message.
+ *
+ * @return Executable async [Call] responsible for loading a message.
+ */
+@OptIn(ExperimentalStreamChatApi::class)
+@CheckResult
+public fun ChatClient.loadMessageById(
+    cid: String,
+    messageId: String,
+    olderMessagesOffset: Int,
+    newerMessagesOffset: Int,
+): Call<Message> {
+    val relevantPlugins = plugins.filterIsInstance<GetMessageListener>()
+    return this.getMessage(messageId)
+        .onErrorReturn(domainImpl().scope) {
+            relevantPlugins.first().onGetMessageError(cid, messageId, olderMessagesOffset, newerMessagesOffset)
+        }
+        .doOnResult(domainImpl().scope) { result ->
+            relevantPlugins.forEach {
+                it.onGetMessageResult(
+                    result,
+                    cid,
+                    messageId,
+                    olderMessagesOffset,
+                    newerMessagesOffset
+                )
+            }
+        }
 }

@@ -43,7 +43,11 @@ import io.getstream.chat.android.client.events.NotificationChannelMutesUpdatedEv
 import io.getstream.chat.android.client.events.NotificationMutesUpdatedEvent
 import io.getstream.chat.android.client.events.UserEvent
 import io.getstream.chat.android.client.experimental.plugin.Plugin
+import io.getstream.chat.android.client.experimental.plugin.factory.PluginFactory
 import io.getstream.chat.android.client.experimental.plugin.listeners.ChannelMarkReadListener
+import io.getstream.chat.android.client.experimental.plugin.listeners.EditMessageListener
+import io.getstream.chat.android.client.experimental.plugin.listeners.HideChannelListener
+import io.getstream.chat.android.client.experimental.plugin.listeners.MarkAllReadListener
 import io.getstream.chat.android.client.experimental.plugin.listeners.QueryChannelListener
 import io.getstream.chat.android.client.experimental.plugin.listeners.QueryChannelsListener
 import io.getstream.chat.android.client.experimental.plugin.listeners.SendMessageListener
@@ -98,6 +102,8 @@ import io.getstream.chat.android.client.utils.TokenUtils
 import io.getstream.chat.android.client.utils.internal.toggle.ToggleService
 import io.getstream.chat.android.client.utils.observable.ChatEventsObservable
 import io.getstream.chat.android.client.utils.observable.Disposable
+import io.getstream.chat.android.client.utils.retry.NoRetryPolicy
+import io.getstream.chat.android.client.utils.retry.RetryPolicy
 import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.core.internal.InternalStreamChatApi
 import kotlinx.coroutines.CoroutineScope
@@ -126,10 +132,8 @@ public class ChatClient internal constructor(
     private val userStateService: UserStateService = UserStateService(),
     private val tokenUtils: TokenUtils = TokenUtils,
     internal val scope: CoroutineScope,
-    private val appContext: Context,
-    @property:InternalStreamChatApi
-    @property:ExperimentalStreamChatApi
-    public val plugins: Collection<Plugin> = emptyList(),
+    // TODO: Make private/internal after migrating ChatDomain
+    public val retryPolicy: RetryPolicy,
 ) {
     private var connectionListener: InitConnectionListener? = null
     private val logger = ChatLogger.get("Client")
@@ -148,6 +152,8 @@ public class ChatClient internal constructor(
 
     private var pushNotificationReceivedListener: PushNotificationReceivedListener =
         PushNotificationReceivedListener { _, _ -> }
+
+    public lateinit var plugins: List<Plugin>
 
     init {
         eventsObservable.subscribe { event ->
@@ -189,8 +195,10 @@ public class ChatClient internal constructor(
             }
         }
         logger.logI("Initialised: " + getVersion())
+    }
 
-        plugins.forEach { it.init(appContext, this) }
+    internal fun addPlugins(plugins: List<Plugin>) {
+        this.plugins = plugins
     }
 
     //region Set user
@@ -966,10 +974,32 @@ public class ChatClient internal constructor(
             }
     }
 
+    /**
+     * Updates the message in the API and calls the plugins that handle this request. [OfflinePlugin] can be used here to
+     * store the updated message locally.
+     *
+     * @param message [Message] The message to be updated.
+     */
     @CheckResult
-    public fun updateMessage(
-        message: Message,
-    ): Call<Message> {
+    public fun updateMessage(message: Message): Call<Message> {
+        val relevantPlugins = plugins.filterIsInstance<EditMessageListener>()
+
+        return api.updateMessage(message)
+            .doOnStart(scope) {
+                relevantPlugins
+                    .forEach { plugin -> plugin.onMessageEditRequest(message) }
+            }
+            .doOnResult(scope) { result ->
+                relevantPlugins.forEach { plugin -> plugin.onMessageEditResult(message, result) }
+            }
+    }
+
+    /**
+     * Updates the message in the API without causing any side effect in the local data of the SDK.
+     *
+     * @param message [Message] The message to be updated in the API
+     */
+    public fun updateMessageInternal(message: Message): Call<Message> {
         return api.updateMessage(message)
     }
 
@@ -1115,13 +1145,49 @@ public class ChatClient internal constructor(
         return api.showChannel(channelType, channelId)
     }
 
+    /**
+     * Hides the specified channel.
+     *
+     * @param channelType The type of the channel.
+     * @param channelId Id of the channel.
+     * @param clearHistory Boolean, if you want to clear the history of this channel or not.
+     *
+     * @return Executable async [Call] responsible for hiding a channel.
+     *
+     * @see <a href="https://getstream.io/chat/docs/channel_delete/?language=kotlin">Hiding a channel</a>
+     */
+    internal fun hideChannelInternal(
+        channelType: String,
+        channelId: String,
+        clearHistory: Boolean = false,
+    ): Call<Unit> = api.hideChannel(channelType, channelId, clearHistory)
+
+    /**
+     * Hides the specified channel with side effects.
+     *
+     * @param channelType The type of the channel.
+     * @param channelId Id of the channel.
+     * @param clearHistory Boolean, if you want to clear the history of this channel or not.
+     *
+     * @return Executable async [Call] responsible for hiding a channel.
+     *
+     * @see <a href="https://getstream.io/chat/docs/channel_delete/?language=kotlin">Hiding a channel</a>
+     */
     @CheckResult
     public fun hideChannel(
         channelType: String,
         channelId: String,
         clearHistory: Boolean = false,
     ): Call<Unit> {
-        return api.hideChannel(channelType, channelId, clearHistory)
+        val relevantPlugins = plugins.filterIsInstance<HideChannelListener>()
+        return hideChannelInternal(channelType, channelId, clearHistory)
+            .doOnStart(scope) {
+                relevantPlugins.forEach { it.onHideChannelRequest(channelType, channelId, clearHistory) }
+            }
+            .doOnResult(scope) { result ->
+                relevantPlugins.forEach { it.onHideChannelResult(result, channelType, channelId, clearHistory) }
+            }
+            .precondition(relevantPlugins) { onHideChannelPrecondition(channelType, channelId, clearHistory) }
     }
 
     /**
@@ -1278,9 +1344,26 @@ public class ChatClient internal constructor(
         return api.acceptInvite(channelType, channelId, message)
     }
 
+    /**
+     * Marks all the channel as read.
+     *
+     * @return [Result] Empty unit result.
+     */
+    @InternalStreamChatApi
+    public fun markAllReadInternal(): Call<Unit> = api.markAllRead()
+
+    /**
+     * Marks all the channel as read.
+     *
+     * @return [Result] Empty unit result.
+     */
     @CheckResult
     public fun markAllRead(): Call<Unit> {
+        val relevantPlugins = plugins.filterIsInstance<MarkAllReadListener>()
         return api.markAllRead()
+            .doOnStart(scope) {
+                relevantPlugins.forEach { it.onMarkAllReadRequest() }
+            }
     }
 
     /**
@@ -1739,9 +1822,9 @@ public class ChatClient internal constructor(
         private var notificationConfig: NotificationConfig = NotificationConfig(pushNotificationsEnabled = false)
         private var fileUploader: FileUploader? = null
         private val tokenManager: TokenManager = TokenManagerImpl()
-        private var plugins: List<Plugin> = emptyList()
         private var customOkHttpClient: OkHttpClient? = null
         private var userCredentialStorage: UserCredentialStorage? = null
+        private var retryPolicy: RetryPolicy = NoRetryPolicy()
 
         /**
          * Sets the log level to be used by the client.
@@ -1868,8 +1951,8 @@ public class ChatClient internal constructor(
 
         @InternalStreamChatApi
         @ExperimentalStreamChatApi
-        public fun withPlugin(plugin: Plugin): Builder = apply {
-            plugins += plugin
+        public fun withPlugin(pluginFactory: PluginFactory): Builder = apply {
+            pluginFactories.add(pluginFactory)
         }
 
         /**
@@ -1877,6 +1960,17 @@ public class ChatClient internal constructor(
          */
         public fun credentialStorage(credentialStorage: UserCredentialStorage): Builder = apply {
             userCredentialStorage = credentialStorage
+        }
+
+        /**
+         * Sets a custom [RetryPolicy] used to determine whether a particular call should be retried.
+         * By default, no calls are retried.
+         * @see [NoRetryPolicy]
+         *
+         * @param retryPolicy Custom [RetryPolicy] implementation.
+         */
+        public fun retryPolicy(retryPolicy: RetryPolicy): Builder = apply {
+            this.retryPolicy = retryPolicy
         }
 
         @InternalStreamChatApi
@@ -1934,20 +2028,37 @@ public class ChatClient internal constructor(
                 userCredentialStorage = userCredentialStorage ?: SharedPreferencesCredentialStorage(appContext),
                 module.userStateService,
                 scope = module.networkScope,
-                appContext = appContext,
-                plugins = plugins,
+                retryPolicy = retryPolicy,
             )
         }
     }
 
     public abstract class ChatClientBuilder @InternalStreamChatApi public constructor() {
         /**
+         * Factories of plugins that will be added to the SDK.
+         *
+         * @see [Plugin]
+         * @see [PluginFactory]
+         */
+        protected val pluginFactories: MutableList<PluginFactory> = mutableListOf()
+
+        /**
          * Create a [ChatClient] instance based on the current configuration
          * of the [Builder].
          */
-        public fun build(): ChatClient = internalBuild().also {
-            instance = it
-        }
+        public fun build(): ChatClient = internalBuild()
+            .apply {
+                preSetUserListeners.add {
+                    addPlugins(
+                        pluginFactories.map { pluginFactory ->
+                            pluginFactory.getOrCreate()
+                        }
+                    )
+                }
+            }
+            .also {
+                instance = it
+            }
 
         @InternalStreamChatApi
         public abstract fun internalBuild(): ChatClient
