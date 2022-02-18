@@ -7,6 +7,7 @@ import io.getstream.chat.android.client.api2.MoshiChatApi
 import io.getstream.chat.android.client.clientstate.SocketStateService
 import io.getstream.chat.android.client.clientstate.UserStateService
 import io.getstream.chat.android.client.events.ConnectedEvent
+import io.getstream.chat.android.client.experimental.errorhandler.factory.NoOpErrorHandlerFactory
 import io.getstream.chat.android.client.helpers.QueryChannelsPostponeHelper
 import io.getstream.chat.android.client.logger.ChatLogLevel
 import io.getstream.chat.android.client.logger.ChatLogger
@@ -17,6 +18,7 @@ import io.getstream.chat.android.client.token.FakeTokenManager
 import io.getstream.chat.android.client.uploader.FileUploader
 import io.getstream.chat.android.client.utils.TokenUtils
 import io.getstream.chat.android.client.utils.observable.FakeChatSocket
+import io.getstream.chat.android.client.utils.retry.NoRetryPolicy
 import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import kotlinx.coroutines.test.TestCoroutineScope
 import org.mockito.Mockito
@@ -85,6 +87,8 @@ internal class MockClientBuilder(
             userCredentialStorage = mock(),
             tokenUtils = tokenUtil,
             scope = testCoroutineScope,
+            retryPolicy = NoRetryPolicy(),
+            errorHandlerFactory = NoOpErrorHandlerFactory(),
         )
 
         client.connectUser(user, token).enqueue()

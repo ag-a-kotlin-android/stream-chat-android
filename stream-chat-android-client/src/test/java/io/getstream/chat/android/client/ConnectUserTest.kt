@@ -22,6 +22,8 @@ internal class ConnectUserTest {
         queryChannelsPostponeHelper = mock(),
         userCredentialStorage = mock(),
         scope = mock(),
+        retryPolicy = mock(),
+        errorHandlerFactory = mock(),
     )
 
     @Test

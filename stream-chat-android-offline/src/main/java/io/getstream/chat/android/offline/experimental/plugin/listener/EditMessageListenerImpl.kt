@@ -3,6 +3,7 @@ package io.getstream.chat.android.offline.experimental.plugin.listener
 import io.getstream.chat.android.client.errors.ChatError
 import io.getstream.chat.android.client.experimental.plugin.listeners.EditMessageListener
 import io.getstream.chat.android.client.extensions.cidToTypeAndId
+import io.getstream.chat.android.client.extensions.isPermanent
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.utils.Result
 import io.getstream.chat.android.client.utils.SyncStatus
@@ -10,7 +11,6 @@ import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.offline.experimental.channel.logic.ChannelLogic
 import io.getstream.chat.android.offline.experimental.global.GlobalState
 import io.getstream.chat.android.offline.experimental.plugin.logic.LogicRegistry
-import io.getstream.chat.android.offline.extensions.isPermanent
 import java.util.Date
 
 @ExperimentalStreamChatApi
@@ -32,7 +32,7 @@ internal class EditMessageListenerImpl(
         val isOnline = globalState.isOnline()
         val messagesToEdit = message.updateMessageOnlineState(isOnline).let(::listOf)
 
-        updateAndSaveMessages(messagesToEdit, channelLogic)
+        channelLogic.updateAndSaveMessages(messagesToEdit)
     }
 
     /**
@@ -46,24 +46,13 @@ internal class EditMessageListenerImpl(
             val channelLogic = channelLogicForMessage(message)
             val messages = message.copy(syncStatus = SyncStatus.COMPLETED).let(::listOf)
 
-            updateAndSaveMessages(messages, channelLogic)
+            channelLogic.updateAndSaveMessages(messages)
         } else {
             val channelLogic = channelLogicForMessage(originalMessage)
             val failedMessage = originalMessage.updateFailedMessage(result.error()).let(::listOf)
 
-            updateAndSaveMessages(failedMessage, channelLogic)
+            channelLogic.updateAndSaveMessages(failedMessage)
         }
-    }
-
-    /**
-     * Updates the messages locally and saves it at database.
-     *
-     * @param messages The list of messages to be updated in the SDK and to be saved in database.
-     * @param channelLogic [ChannelLogic].
-     */
-    private suspend fun updateAndSaveMessages(messages: List<Message>, channelLogic: ChannelLogic) {
-        channelLogic.upsertMessages(messages)
-        channelLogic.storeMessageLocally(messages)
     }
 
     /**

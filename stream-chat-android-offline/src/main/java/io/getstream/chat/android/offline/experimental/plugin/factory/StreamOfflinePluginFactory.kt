@@ -7,12 +7,12 @@ import io.getstream.chat.android.client.experimental.plugin.factory.PluginFactor
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.livedata.ChatDomain
-import io.getstream.chat.android.livedata.utils.toLiveDataRetryPolicy
 import io.getstream.chat.android.offline.ChatDomainImpl
 import io.getstream.chat.android.offline.experimental.global.GlobalMutableState
 import io.getstream.chat.android.offline.experimental.plugin.OfflinePlugin
 import io.getstream.chat.android.offline.experimental.plugin.configuration.Config
 import io.getstream.chat.android.offline.experimental.plugin.listener.ChannelMarkReadListenerImpl
+import io.getstream.chat.android.offline.experimental.plugin.listener.DeleteReactionListenerImpl
 import io.getstream.chat.android.offline.experimental.plugin.listener.EditMessageListenerImpl
 import io.getstream.chat.android.offline.experimental.plugin.listener.GetMessageListenerImpl
 import io.getstream.chat.android.offline.experimental.plugin.listener.HideChannelListenerImpl
@@ -52,13 +52,13 @@ public class StreamOfflinePluginFactory(
             if (config.persistenceEnabled) offlineEnabled() else offlineDisabled()
             if (config.userPresence) userPresenceEnabled() else userPresenceDisabled()
             recoveryEnabled()
-            retryPolicy(config.retryPolicy.toLiveDataRetryPolicy())
         }.build()
 
         val userStateFlow = MutableStateFlow<User?>(null)
         chatClient.preSetUserListeners.add { user -> userStateFlow.value = user }
 
-        val stateRegistry = (io.getstream.chat.android.offline.ChatDomain.instance as ChatDomainImpl).run {
+        val chatDomainImpl = io.getstream.chat.android.offline.ChatDomain.instance as ChatDomainImpl
+        val stateRegistry = chatDomainImpl.run {
             StateRegistry.getOrCreate(scope, userStateFlow, repos, repos.observeLatestUsers())
         }
         val logic = LogicRegistry.getOrCreate(stateRegistry)
@@ -73,6 +73,11 @@ public class StreamOfflinePluginFactory(
             getMessageListener = GetMessageListenerImpl(logic),
             hideChannelListener = HideChannelListenerImpl(logic),
             markAllReadListener = MarkAllReadListenerImpl(logic),
+            deleteReactionListener = DeleteReactionListenerImpl(
+                logic = logic,
+                globalState = globalStateRegistry,
+                repos = chatDomainImpl.repos,
+            ),
         )
     }
 }
