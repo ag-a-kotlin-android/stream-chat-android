@@ -26,6 +26,8 @@ import com.getstream.sdk.chat.utils.extensions.showToast
 import com.getstream.sdk.chat.view.EndlessScrollListener
 import com.getstream.sdk.chat.view.messages.MessageListItemWrapper
 import com.getstream.sdk.chat.viewmodel.messages.MessageListViewModel
+import io.getstream.chat.android.client.ChatClient
+import io.getstream.chat.android.client.call.Call
 import io.getstream.chat.android.client.models.Attachment
 import io.getstream.chat.android.client.models.Channel
 import io.getstream.chat.android.client.models.Flag
@@ -34,13 +36,15 @@ import io.getstream.chat.android.client.models.Reaction
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.client.utils.Result
 import io.getstream.chat.android.core.internal.coroutines.DispatcherProvider
+import io.getstream.chat.android.offline.extensions.downloadAttachment
 import io.getstream.chat.android.ui.ChatUI
 import io.getstream.chat.android.ui.R
 import io.getstream.chat.android.ui.common.extensions.getCreatedAtOrThrow
 import io.getstream.chat.android.ui.common.extensions.internal.createStreamThemeWrapper
 import io.getstream.chat.android.ui.common.extensions.internal.getFragmentManager
 import io.getstream.chat.android.ui.common.extensions.internal.isCurrentUser
-import io.getstream.chat.android.ui.common.extensions.internal.isMedia
+import io.getstream.chat.android.ui.common.extensions.internal.isGiphy
+import io.getstream.chat.android.ui.common.extensions.internal.isImage
 import io.getstream.chat.android.ui.common.extensions.internal.streamThemeInflater
 import io.getstream.chat.android.ui.common.extensions.internal.use
 import io.getstream.chat.android.ui.common.extensions.isDeleted
@@ -92,7 +96,7 @@ import io.getstream.chat.android.ui.message.list.adapter.MessageListItemViewHold
 import io.getstream.chat.android.ui.message.list.adapter.MessageListListenerContainerImpl
 import io.getstream.chat.android.ui.message.list.adapter.internal.MessageListItemAdapter
 import io.getstream.chat.android.ui.message.list.adapter.internal.MessageListItemDecoratorProvider
-import io.getstream.chat.android.ui.message.list.adapter.viewholder.attachment.AttachmentViewFactory
+import io.getstream.chat.android.ui.message.list.adapter.viewholder.attachment.AttachmentFactoryManager
 import io.getstream.chat.android.ui.message.list.background.MessageBackgroundFactory
 import io.getstream.chat.android.ui.message.list.background.MessageBackgroundFactoryImpl
 import io.getstream.chat.android.ui.message.list.internal.HiddenMessageListItemPredicate
@@ -263,7 +267,6 @@ public class MessageListView : ConstraintLayout {
             is MessageListViewModel.ErrorEvent.FlagMessageError -> R.string.stream_ui_message_list_error_flag_message
             is MessageListViewModel.ErrorEvent.PinMessageError -> R.string.stream_ui_message_list_error_pin_message
             is MessageListViewModel.ErrorEvent.UnpinMessageError -> R.string.stream_ui_message_list_error_unpin_message
-            is MessageListViewModel.ErrorEvent.DeleteMessageError -> R.string.stream_ui_message_list_error_delete_message
         }.let(::showToast)
     }
 
@@ -319,7 +322,8 @@ public class MessageListView : ConstraintLayout {
                         ),
                         viewStyle,
                         messageListItemViewHolderFactory,
-                        messageBackgroundFactory
+                        messageBackgroundFactory,
+                        attachmentFactoryManager,
                     )
                     .apply {
                         setReactionClickHandler { message, reactionType ->
@@ -388,7 +392,7 @@ public class MessageListView : ConstraintLayout {
                 return@AttachmentClickListener
             }
 
-            if (attachment.type == ModelType.attach_giphy) {
+            if (attachment.isGiphy()) {
                 val url = attachment.imagePreviewUrl ?: attachment.titleLink ?: attachment.ogUrl
 
                 if (url != null) {
@@ -396,7 +400,7 @@ public class MessageListView : ConstraintLayout {
                 }
             } else {
                 val destination = when {
-                    message.attachments.all(Attachment::isMedia) -> {
+                    message.attachments.all(Attachment::isImage) -> {
                         val filteredAttachments = message.attachments
                             .filter { it.type == ModelType.attach_image && !it.imagePreviewUrl.isNullOrEmpty() }
                         val attachmentGalleryItems = filteredAttachments.map {
@@ -423,12 +427,14 @@ public class MessageListView : ConstraintLayout {
 
     private val DEFAULT_ATTACHMENT_DOWNLOAD_CLICK_LISTENER =
         AttachmentDownloadClickListener { attachment ->
-            attachmentDownloadHandler.onAttachmentDownload(attachment)
-            Toast.makeText(
-                context,
-                context.getString(R.string.stream_ui_message_list_download_started),
-                Toast.LENGTH_SHORT
-            ).show()
+            attachmentDownloadHandler.onAttachmentDownload {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.stream_ui_message_list_download_started),
+                    Toast.LENGTH_SHORT
+                ).show()
+                ChatClient.instance().downloadAttachment(context, attachment)
+            }
         }
     private val DEFAULT_REACTION_VIEW_CLICK_LISTENER =
         ReactionViewClickListener { message: Message ->
@@ -443,7 +449,8 @@ public class MessageListView : ConstraintLayout {
                     ),
                     requireStyle(),
                     messageListItemViewHolderFactory,
-                    messageBackgroundFactory
+                    messageBackgroundFactory,
+                    attachmentFactoryManager,
                 ).apply {
                     setReactionClickHandler { message, reactionType ->
                         messageReactionHandler.onMessageReaction(message, reactionType)
@@ -487,7 +494,7 @@ public class MessageListView : ConstraintLayout {
 
     private lateinit var messageListItemViewHolderFactory: MessageListItemViewHolderFactory
     private lateinit var messageDateFormatter: DateFormatter
-    private lateinit var attachmentViewFactory: AttachmentViewFactory
+    private lateinit var attachmentFactoryManager: AttachmentFactoryManager
     private lateinit var messageBackgroundFactory: MessageBackgroundFactory
 
     public constructor(context: Context) : this(context, null, 0)
@@ -526,7 +533,7 @@ public class MessageListView : ConstraintLayout {
 
         loadingViewContainer.removeView(binding.defaultLoadingView)
         messageListViewStyle?.loadingView?.let { loadingView ->
-            this.loadingView = streamThemeInflater.inflate(loadingView, null).apply {
+            this.loadingView = streamThemeInflater.inflate(loadingView, loadingViewContainer, false).apply {
                 isVisible = true
                 loadingViewContainer.addView(this)
             }
@@ -592,7 +599,7 @@ public class MessageListView : ConstraintLayout {
     }
 
     override fun onDetachedFromWindow() {
-        if (this::adapter.isInitialized) {
+        if (isAdapterInitialized()) {
             adapter.onDetachedFromRecyclerView(binding.chatMessagesRV)
         }
         attachmentGalleryDestination.unregister()
@@ -665,11 +672,11 @@ public class MessageListView : ConstraintLayout {
     private fun initAdapter() {
         // Create default DateFormatter if needed
         if (::messageDateFormatter.isInitialized.not()) {
-            messageDateFormatter = DateFormatter.from(context)
+            messageDateFormatter = ChatUI.dateFormatter
         }
 
-        if (::attachmentViewFactory.isInitialized.not()) {
-            attachmentViewFactory = AttachmentViewFactory()
+        if (::attachmentFactoryManager.isInitialized.not()) {
+            attachmentFactoryManager = ChatUI.attachmentFactoryManager
         }
 
         // Create default ViewHolderFactory if needed
@@ -691,9 +698,10 @@ public class MessageListView : ConstraintLayout {
         )
 
         messageListItemViewHolderFactory.setListenerContainer(this.listenerContainer)
-        messageListItemViewHolderFactory.setAttachmentViewFactory(this.attachmentViewFactory)
+        messageListItemViewHolderFactory.setAttachmentFactoryManager(this.attachmentFactoryManager)
         messageListItemViewHolderFactory.setMessageListItemStyle(requireStyle().itemStyle)
         messageListItemViewHolderFactory.setGiphyViewHolderStyle(requireStyle().giphyViewHolderStyle)
+        messageListItemViewHolderFactory.setReplyMessageListItemViewStyle(requireStyle().replyMessageStyle)
 
         adapter = MessageListItemAdapter(messageListItemViewHolderFactory)
         adapter.setHasStableIds(true)
@@ -891,7 +899,7 @@ public class MessageListView : ConstraintLayout {
      * @param messageListItemViewHolderFactory The custom factory to be used when generating item ViewHolders.
      */
     public fun setMessageViewHolderFactory(messageListItemViewHolderFactory: MessageListItemViewHolderFactory) {
-        check(::adapter.isInitialized.not()) {
+        check(isAdapterInitialized().not()) {
             "Adapter was already initialized, please set MessageViewHolderFactory first"
         }
         this.messageListItemViewHolderFactory = messageListItemViewHolderFactory
@@ -904,7 +912,7 @@ public class MessageListView : ConstraintLayout {
      * @param messageBackgroundFactory The custom factory that provides drawables to be used in the messages background
      */
     public fun setMessageBackgroundFactory(messageBackgroundFactory: MessageBackgroundFactory) {
-        check(::adapter.isInitialized.not()) {
+        check(isAdapterInitialized().not()) {
             "Adapter was already initialized, please set MessageBackgroundFactory first"
         }
         this.messageBackgroundFactory = messageBackgroundFactory
@@ -916,7 +924,7 @@ public class MessageListView : ConstraintLayout {
      * @param messageDateFormatter The formatter that is used to format the message date.
      */
     public fun setMessageDateFormatter(messageDateFormatter: DateFormatter) {
-        check(::adapter.isInitialized.not()) { "Adapter was already initialized; please set DateFormatter first" }
+        check(isAdapterInitialized().not()) { "Adapter was already initialized; please set DateFormatter first" }
         this.messageDateFormatter = messageDateFormatter
     }
 
@@ -926,7 +934,7 @@ public class MessageListView : ConstraintLayout {
      * @param showAvatarPredicate The predicate that checks if the avatar should be shown.
      */
     public fun setShowAvatarPredicate(showAvatarPredicate: ShowAvatarPredicate) {
-        check(::adapter.isInitialized.not()) {
+        check(isAdapterInitialized().not()) {
             "Adapter was already initialized; please set ShowAvatarPredicate first"
         }
         this.showAvatarPredicate = showAvatarPredicate
@@ -948,7 +956,7 @@ public class MessageListView : ConstraintLayout {
      * @param messageListItemPredicate The predicate used to filter the list of [MessageListItem].
      */
     public fun setMessageListItemPredicate(messageListItemPredicate: MessageListItemPredicate) {
-        check(::adapter.isInitialized.not()) {
+        check(isAdapterInitialized().not()) {
             "Adapter was already initialized, please set MessageListItemPredicate first"
         }
         this.messageListItemPredicate = messageListItemPredicate
@@ -972,23 +980,24 @@ public class MessageListView : ConstraintLayout {
      * Alternatively you can pass your custom implementation by implementing the [MessageListItemPredicate] interface.
      */
     public fun setDeletedMessageListItemPredicate(deletedMessageListItemPredicate: MessageListItemPredicate) {
-        check(::adapter.isInitialized.not()) {
+        check(isAdapterInitialized().not()) {
             "Adapter was already initialized, please set MessageListItemPredicate first"
         }
         this.deletedMessageListItemPredicate = deletedMessageListItemPredicate
     }
 
     /**
-     * Allows clients to set a custom implementation of [AttachmentViewFactory]. Use this
-     * method to create a custom content view for the message attachments.
-     *§
-     * @param attachmentViewFactory The custom view factory for attachments.
+     * Allows clients to set an instance of [AttachmentFactoryManager] that holds
+     * a list of custom attachment factories. Use this method to create a custom
+     * content view for the message attachments.
+     *
+     * @param attachmentFactoryManager Hold the list of factories for custom attachments.
      */
-    public fun setAttachmentViewFactory(attachmentViewFactory: AttachmentViewFactory) {
-        check(::adapter.isInitialized.not()) {
-            "Adapter was already initialized, please set AttachmentViewFactory first"
+    public fun setAttachmentFactoryManager(attachmentFactoryManager: AttachmentFactoryManager) {
+        check(isAdapterInitialized().not()) {
+            "Adapter was already initialized, please set attachment factories first"
         }
-        this.attachmentViewFactory = attachmentViewFactory
+        this.attachmentFactoryManager = attachmentFactoryManager
     }
 
     public fun handleFlagMessageResult(result: Result<Flag>) {
@@ -1074,6 +1083,13 @@ public class MessageListView : ConstraintLayout {
                 messagesRV.overScrollMode = View.OVER_SCROLL_ALWAYS
             }
         }
+    }
+
+    /**
+     * @return if the adapter has been initialized or not.
+     */
+    public fun isAdapterInitialized(): Boolean {
+        return ::adapter.isInitialized
     }
 
     //region Listener setters
@@ -1553,7 +1569,7 @@ public class MessageListView : ConstraintLayout {
     }
 
     public fun interface AttachmentDownloadHandler {
-        public fun onAttachmentDownload(attachment: Attachment)
+        public fun onAttachmentDownload(attachmentDownloadCall: () -> Call<Unit>)
     }
 
     public fun interface ErrorEventHandler {

@@ -2,7 +2,9 @@ package io.getstream.chat.docs.java;
 
 import android.content.Context;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
@@ -36,7 +38,6 @@ public class AndroidIntroduction {
         // Step 2 - Set up the domain for offline storage
         ChatDomain domain = new ChatDomain.Builder(applicationContext, client)
                 // Enable offline support
-                .offlineEnabled()
                 .build();
 
         // Step 2 - Authenticate and connect the user
@@ -60,9 +61,10 @@ public class AndroidIntroduction {
 
         Map<String, Object> extraData = new HashMap<>();
         extraData.put("name", "Awesome channel about traveling");
+        List<String> memberIds = new LinkedList<>();
 
         // Creating a channel with the low level client
-        channelClient.create(extraData).enqueue(result -> {
+        channelClient.create(memberIds, extraData).enqueue(result -> {
             if (result.isSuccess()) {
                 Channel channel = result.data();
                 // Use channel by calling methods on channelClient
@@ -92,16 +94,7 @@ public class AndroidIntroduction {
         message.putExtraValue("customField", "123");
 
         // Using the low level client
-        channelClient.sendMessage(message).enqueue(result -> {
-            if (result.isSuccess()) {
-                Message sentMessage = result.data();
-            } else {
-                // Handle result.error()
-            }
-        });
-
-        // Using the offline support library
-        chatDomain.sendMessage(message).enqueue(result -> {
+        channelClient.sendMessage(message, false).enqueue(result -> {
             if (result.isSuccess()) {
                 Message sentMessage = result.data();
             } else {

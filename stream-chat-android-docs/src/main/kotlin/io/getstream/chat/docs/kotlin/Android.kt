@@ -34,6 +34,7 @@ import io.getstream.chat.android.client.models.Filters
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.livedata.ChatDomain
+import io.getstream.chat.android.offline.extensions.loadOlderMessages
 import io.getstream.chat.android.ui.ChatUI
 import io.getstream.chat.android.ui.R
 import io.getstream.chat.android.ui.StyleTransformer
@@ -50,6 +51,7 @@ import io.getstream.chat.android.ui.channel.list.header.viewmodel.bindView
 import io.getstream.chat.android.ui.channel.list.viewmodel.ChannelListViewModel
 import io.getstream.chat.android.ui.channel.list.viewmodel.bindView
 import io.getstream.chat.android.ui.channel.list.viewmodel.factory.ChannelListViewModelFactory
+import io.getstream.chat.android.ui.common.ChannelNameFormatter
 import io.getstream.chat.android.ui.common.navigation.ChatNavigator
 import io.getstream.chat.android.ui.common.style.ChatFonts
 import io.getstream.chat.android.ui.common.style.TextStyle
@@ -664,7 +666,6 @@ class Android {
         fun initializeChatDomain() {
             val chatClient = ChatClient.Builder("apiKey", requireContext()).build()
             val chatDomain = ChatDomain.Builder(requireContext(), chatClient)
-                .offlineEnabled()
                 .userPresenceEnabled()
                 .build()
         }
@@ -706,11 +707,11 @@ class Android {
         }
 
         fun loadMoreMessages() {
-            val chatDomain = ChatDomain.instance()
+            val chatClient = ChatClient.instance()
 
             // TODO: Review docs (https://github.com/GetStream/stream-chat-android/issues/2976)
             @Suppress("DEPRECATION_ERROR")
-            chatDomain.loadOlderMessages("messaging:123", 10)
+            chatClient.loadOlderMessages("messaging:123", 10)
                 .enqueue { result ->
                     if (result.isSuccess) {
                         val channel = result.data()
@@ -719,10 +720,10 @@ class Android {
         }
 
         fun sendMessage() {
-            val chatDomain = ChatDomain.instance()
+            val chatClient = ChatClient.instance()
             val message = Message(text = "Hello world")
 
-            chatDomain.sendMessage(message)
+            chatClient.sendMessage("messaging", "1234", message)
                 .enqueue { result ->
                     if (result.isSuccess) {
                         val message = result.data()
@@ -975,6 +976,35 @@ class Android {
                     )
 
                     return (imageResult.drawable as? BitmapDrawable)?.bitmap
+                }
+            }
+        }
+    }
+
+    class ChannelNameFormatterCustomization {
+
+        fun channelNameFormatterCustomization() {
+            ChatUI.channelNameFormatter = ChannelNameFormatter { channel, currentUser ->
+                channel.name
+            }
+        }
+    }
+
+    class DateFormatterCustomization {
+
+        fun dateFormatterCustomization() {
+            ChatUI.dateFormatter = object : DateFormatter {
+                private val dateFormatter = DateTimeFormatter.ofPattern("yy MM dd")
+                private val dateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+                override fun formatDate(localDateTime: LocalDateTime?): String {
+                    localDateTime ?: return ""
+                    return dateFormatter.format(localDateTime)
+                }
+
+                override fun formatTime(localTime: LocalTime?): String {
+                    localTime ?: return ""
+                    return dateTimeFormatter.format(localTime)
                 }
             }
         }

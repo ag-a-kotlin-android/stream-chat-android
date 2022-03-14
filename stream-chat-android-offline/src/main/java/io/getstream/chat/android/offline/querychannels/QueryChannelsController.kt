@@ -13,14 +13,12 @@ import io.getstream.chat.android.client.logger.ChatLogger
 import io.getstream.chat.android.client.models.Channel
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.client.utils.Result
-import io.getstream.chat.android.core.ExperimentalStreamChatApi
 import io.getstream.chat.android.offline.ChatDomainImpl
 import io.getstream.chat.android.offline.experimental.querychannels.logic.QueryChannelsLogic
 import io.getstream.chat.android.offline.experimental.querychannels.state.QueryChannelsMutableState
 import io.getstream.chat.android.offline.request.QueryChannelsPaginationRequest
 import io.getstream.chat.android.offline.request.toAnyChannelPaginationRequest
 import io.getstream.chat.android.offline.request.toQueryChannelsRequest
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -31,13 +29,11 @@ private const val MEMBER_LIMIT = 30
 private const val INITIAL_CHANNEL_OFFSET = 0
 private const val CHANNEL_LIMIT = 30
 
-@OptIn(ExperimentalStreamChatApi::class)
 public class QueryChannelsController internal constructor(
     private val domainImpl: ChatDomainImpl,
     private val mutableState: QueryChannelsMutableState,
     private val queryChannelsLogic: QueryChannelsLogic,
 ) {
-    public val recoveryNeeded: MutableStateFlow<Boolean> by mutableState::recoveryNeeded
 
     public val filter: FilterObject by mutableState::filter
     public val sort: QuerySort<Channel> by mutableState::sort
@@ -79,18 +75,6 @@ public class QueryChannelsController internal constructor(
             messageLimit,
             memberLimit
         )
-    }
-
-    /**
-     * Updates the collection of channels by some channel. If the channels passes filter it's added to collection,
-     * otherwise it gets removed.
-     */
-    internal suspend fun updateQueryChannelCollectionByNewChannel(channel: Channel) {
-        if (queryChannelsLogic.channelFilter(channel.cid, filter)) {
-            addChannel(channel)
-        } else {
-            removeChannel(channel.cid)
-        }
     }
 
     internal suspend fun handleEvents(events: List<ChatEvent>) = queryChannelsLogic.handleEvents(events)

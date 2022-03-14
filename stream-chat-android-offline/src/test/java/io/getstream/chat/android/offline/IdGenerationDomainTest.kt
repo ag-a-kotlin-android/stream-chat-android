@@ -2,7 +2,6 @@ package io.getstream.chat.android.offline
 
 import android.content.Context
 import android.os.Handler
-import com.nhaarman.mockitokotlin2.mock
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.offline.experimental.global.GlobalMutableState
@@ -13,26 +12,29 @@ import org.amshove.kluent.shouldNotContain
 import org.amshove.kluent.shouldThrow
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.mock
 
 internal class IdGenerationDomainTest {
 
     private lateinit var chatDomainImpl: ChatDomainImpl
     private lateinit var currentUserFake: User
+    private lateinit var globalMutableState: GlobalMutableState
 
     @BeforeEach
     fun init() {
         val contextMock = mock<Context>()
         val clientMock = mock<ChatClient>()
         val handlerFake = Handler()
+        globalMutableState = GlobalMutableState.create()
+
         chatDomainImpl = ChatDomainImpl(
             appContext = contextMock,
             client = clientMock,
             handler = handlerFake,
             backgroundSyncEnabled = true,
-            offlineEnabled = true,
             recoveryEnabled = false,
             userPresence = true,
-            globalState = GlobalMutableState.create()
+            globalState = globalMutableState
         )
         currentUserFake = randomUser()
     }
@@ -57,7 +59,7 @@ internal class IdGenerationDomainTest {
         setCurrentUser()
 
         val idMap = sortedSetOf<String>()
-        (0..1000000).forEach {
+        repeat(1000000) {
             val messageId = chatDomainImpl.generateMessageId()
             idMap shouldNotContain messageId
             idMap.add(messageId)
@@ -65,8 +67,8 @@ internal class IdGenerationDomainTest {
     }
 
     private fun setCurrentUser() {
-        chatDomainImpl.offlineEnabled = false
-        chatDomainImpl.setUser(currentUserFake)
+        globalMutableState._user.value = currentUserFake
+        chatDomainImpl.userConnected(currentUserFake)
         chatDomainImpl.user.value.shouldNotBeNull()
     }
 }
