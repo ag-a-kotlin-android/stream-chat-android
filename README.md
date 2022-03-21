@@ -1,4 +1,5 @@
 # Official Android SDK for [Stream Chat](https://getstream.io/chat/sdk/android/)
+# Tutorial [Compose Chat Messaging Tutorial](https://getstream.io/chat/compose/tutorial/)
 
 <p align="center">
   <a href="https://getstream.io/tutorials/android-chat/">
